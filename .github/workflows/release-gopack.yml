@@ -1,0 +1,71 @@
+name: release-gopack
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "version to publish"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    env:
+      BINARY_NAME: gopack
+      CGO_ENABLED: 0
+      GOOS: linux
+      GOARCH: amd64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version input
+        id: ver
+        run: |
+          VER="${{ inputs.version }}"
+          if ! [[ "$VER" =~ ^[0-9]+(\.[0-9]+){2}$ ]]; then
+            echo "Version must be like 1.2.3"; exit 1
+          fi
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "tag=v$VER" >> $GITHUB_OUTPUT
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build gopack (linux/amd64)
+        run: |
+          mkdir -p dist
+          go build -trimpath -o "dist/${BINARY_NAME}"
+          chmod +x "dist/${BINARY_NAME}"
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          sha256sum "${BINARY_NAME}" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create or update tag v<version>
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          git tag -f "$TAG"
+          git push -f origin "$TAG"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: gopack v${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          files: |
+            dist/${{ env.BINARY_NAME }}
+            dist/SHA256SUMS
