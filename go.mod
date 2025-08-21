@@ -1,4 +1,4 @@
-module main
+module github.com/TaurMorchant/go-pack
 
 go 1.24.2
 
