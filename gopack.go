@@ -1,14 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"golang.org/x/mod/modfile"
@@ -69,7 +67,7 @@ func run() error {
 	}
 	modPath := modf.Module.Mod.Path
 
-	// proxy layout: <out>/<escaped module>/@v/<escaped version>.{mod,info,zip} and <out>/<escaped module>/@v/list
+	// proxy layout: <out>/<escaped module>/@v/<escaped version>.{mod,info,zip}
 	escPath, err := module.EscapePath(modPath)
 	if err != nil {
 		return fmt.Errorf("escape module path: %w", err)
@@ -120,91 +118,10 @@ func run() error {
 		return err
 	}
 
-	// update @v/list
-	if err := updateListFile(atV, *version); err != nil {
-		return fmt.Errorf("update list: %w", err)
-	}
-
-	fmt.Printf("Wrote:\n  %s\n  %s\n  %s\n  %s\n",
+	fmt.Printf("Wrote:\n  %s\n  %s\n  %s\n",
 		filepath.Join(atV, escVer+".mod"),
 		filepath.Join(atV, escVer+".info"),
 		zipFile,
-		filepath.Join(atV, "list"),
 	)
 	return nil
-}
-
-// updateListFile updates the @v/list file (newline-separated unescaped versions).
-// It ensures unique entries, semver-sorted ascending, and writes atomically.
-func updateListFile(atVDir string, newVer string) error {
-	listPath := filepath.Join(atVDir, "list")
-
-	// Read existing versions (if any).
-	existing := make([]string, 0, 16)
-	f, err := os.Open(listPath)
-	if err == nil {
-		defer f.Close()
-		sc := bufio.NewScanner(f)
-		for sc.Scan() {
-			line := sc.Text()
-			if line == "" {
-				continue
-			}
-			// Keep only valid semver-looking lines (defensive).
-			if semver.IsValid(line) {
-				existing = append(existing, line)
-			}
-		}
-		if err := sc.Err(); err != nil {
-			return fmt.Errorf("scan list: %w", err)
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	// Insert new version if missing.
-	seen := make(map[string]struct{}, len(existing)+1)
-	for _, v := range existing {
-		seen[v] = struct{}{}
-	}
-	if _, ok := seen[newVer]; !ok {
-		existing = append(existing, newVer)
-	}
-
-	// Sort using semver.Compare (ascending).
-	sort.Slice(existing, func(i, j int) bool {
-		return semver.Compare(existing[i], existing[j]) < 0
-	})
-
-	// Compose content with trailing newline.
-	var out []byte
-	for _, v := range existing {
-		out = append(out, []byte(v+"\n")...)
-	}
-
-	// Atomic write: same-dir temp + rename.
-	return writeFileAtomic(atVDir, "list", out, filePerm)
-}
-
-// writeFileAtomic writes data to dir/baseName atomically.
-func writeFileAtomic(dir, baseName string, data []byte, perm os.FileMode) error {
-	tmp, err := os.CreateTemp(dir, baseName+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, filepath.Join(dir, baseName))
 }
